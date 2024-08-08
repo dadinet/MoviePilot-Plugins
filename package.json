@@ -2,12 +2,13 @@
     "TelegramMsg": {
         "name": "Telegram消息通知",
         "description": "支持5个Telegram接收消息通知",
-        "version": "1.3",
+        "version": "1.4",
         "labels": "消息通知",
         "icon": "https://raw.githubusercontent.com/dadinet/MoviePilot-Plugins/main/icons/Telegram_A.png",
         "author": "dadinet",
         "level": 1,
         "history": {
+          "v1.4": "增加：可选择Bot显示数量",
           "v1.3": "修复：内容为空时发送None的问题和更详细的发送消息记录",
           "v1.2": "修复：移除调试通知",
           "v1.1": "修复：移除TG不支持的逻辑",

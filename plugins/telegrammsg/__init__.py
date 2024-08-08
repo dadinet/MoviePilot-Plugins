@@ -1,6 +1,7 @@
 import requests
 from typing import Any, List, Dict, Tuple
 import threading
+import io
 
 from app.core.event import eventmanager, Event
 from app.log import logger
@@ -18,7 +19,7 @@ class TelegramMsg(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/dadinet/MoviePilot-Plugins/main/icons/Telegram_A.png"
     # 插件版本
-    plugin_version = "1.3"
+    plugin_version = "1.4"
     # 插件作者
     plugin_author = "dadinet"
     # 作者主页
@@ -33,33 +34,36 @@ class TelegramMsg(_PluginBase):
     # 私有属性
     _enabled = False
     _onlyonce = False
-    _send_image_enabled = False
-
-    _tg_configs = [
-        {"chat_id": "", "bot_token": "", "msgtypes": [], "size": 1},
-        {"chat_id": "", "bot_token": "", "msgtypes": [], "size": 2},
-        {"chat_id": "", "bot_token": "", "msgtypes": [], "size": 3},
-        {"chat_id": "", "bot_token": "", "msgtypes": [], "size": 4},
-        {"chat_id": "", "bot_token": "", "msgtypes": [], "size": 5},
-    ]
 
     _scheduler = None
     _event = threading.Event()
 
     def init_plugin(self, config: dict = None):
         """
-        测试消息
+        初始化插件
         """
+        # 读取配置中的 tg_count。如果配置中没有该项，则默认设置为3个 Bot。
+        tg_count = config.get("tg_count", 3)
+
+        # 初始化 _tg_configs，根据 tg_count 生成配置
+        self._tg_configs = [
+            {"chat_id": "", "bot_token": "", "msgtypes": [], "size": i+1}
+            for i in range(tg_count)
+        ]
+
+        # 如果有 config，更新配置
         if config:
             self._enabled = config.get("enabled")
             self._onlyonce = config.get("onlyonce")
             self._send_image_enabled = config.get("send_image_enabled")
-            
-            for i in range(5):
-                self._tg_configs[i]["chat_id"] = config.get(f"chat_id_{i+1}")
-                self._tg_configs[i]["bot_token"] = config.get(f"bot_token_{i+1}")
-                self._tg_configs[i]["msgtypes"] = config.get(f"msgtypes_{i+1}") or []
 
+            # 更新已有的 tg_config
+            for i in range(tg_count):
+                self._tg_configs[i]["chat_id"] = config.get(f"chat_id_{i+1}", "")
+                self._tg_configs[i]["bot_token"] = config.get(f"bot_token_{i+1}", "")
+                self._tg_configs[i]["msgtypes"] = config.get(f"msgtypes_{i+1}", [])
+
+        # 如果 onlyonce 为真，发送测试消息
         if self._onlyonce:
             for i, tg_config in enumerate(self._tg_configs):
                 if tg_config["chat_id"] and tg_config["bot_token"]:
@@ -82,15 +86,16 @@ class TelegramMsg(_PluginBase):
         config = {
             "enabled": self._enabled,
             "onlyonce": self._onlyonce,
-            "send_image_enabled": self._send_image_enabled,
+            "tg_count": len(self._tg_configs),
         }
-        
-        for i in range(5):
-            config[f"chat_id_{i+1}"] = self._tg_configs[i]["chat_id"]
-            config[f"bot_token_{i+1}"] = self._tg_configs[i]["bot_token"]
-            config[f"msgtypes_{i+1}"] = self._tg_configs[i]["msgtypes"]
-        
+
+        for i, tg_config in enumerate(self._tg_configs):
+            config[f"chat_id_{i+1}"] = tg_config["chat_id"]
+            config[f"bot_token_{i+1}"] = tg_config["bot_token"]
+            config[f"msgtypes_{i+1}"] = tg_config["msgtypes"]
+
         self.update_config(config)
+
 
     def get_state(self) -> bool:
         return self._enabled and any(tg_config["bot_token"] and tg_config["chat_id"] for tg_config in self._tg_configs)
@@ -115,7 +120,8 @@ class TelegramMsg(_PluginBase):
             })
 
         tg_config_form = []
-        for i in range(5):  # 支持配置5个Telegram账号
+        tg_count = len(self._tg_configs)
+        for i in range(tg_count):  # 动态支持多个Telegram账号
             tg_config_form.append({
                 'component': 'VRow',
                 'content': [
@@ -237,25 +243,50 @@ class TelegramMsg(_PluginBase):
                                 },
                                 'content': [
                                     {
-                                        'component': 'VSwitch',
+                                        'component': 'VSelect',
                                         'props': {
-                                            'model': 'send_image_enabled',
-                                            'label': '发送图片',
-                                            'hint': '可选；关闭时，不发送图片',
+                                            'model': 'tg_count',
+                                            'label': 'Telegram Bot 数量',
+                                            'items': [{'title': str(i), 'value': i} for i in range(1, 6)],
+                                            'hint': '选择要配置的Telegram Bot数量',
                                             'persistent-hint': True,
+                                            'clearable': False,
                                         }
                                     }
                                 ]
                             }
                         ]
                     },
-                    *tg_config_form
+                    *tg_config_form,
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VAlert',
+                                        'props': {
+                                            'type': 'info',
+                                            'variant': 'tonal',
+                                            'text': '说明：'
+                                                    '1、初始显示3个Bot配置，如需多个选择数量保存，再次进入配置即可。'
+                                                    '2、由于有的插件用的还是"站点消息"接口，所以目前需要同时勾选“插件消息”和“站点消息”来兼容，等待适配！',
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    }
                 ]
             }
         ], {
             "enabled": False,
             "onlyonce": False,
-            "send_image_enabled": False,
+            "tg_count": 3,
             "chat_id_1": "",
             "bot_token_1": "",
             "msgtypes_1": [],
@@ -272,6 +303,7 @@ class TelegramMsg(_PluginBase):
             "bot_token_5": "",
             "msgtypes_5": [],
         }
+
 
     def get_page(self) -> List[dict]:
         pass
@@ -316,9 +348,9 @@ class TelegramMsg(_PluginBase):
                 continue
 
             # 发送消息到当前配置的Telegram聊天
-            self.send_msg(tg_config, title=title, text=text, image=image)
+            self.send_msg(tg_config, title=title, text=text, image=image, msg_type=msg_type)
 
-    def send_msg(self, tg_config, title, text, image=None):
+    def send_msg(self, tg_config, title, text, image=None, msg_type=None):
         """
         发送消息到指定的Telegram聊天。
 
@@ -326,62 +358,67 @@ class TelegramMsg(_PluginBase):
         :param title: 消息标题。
         :param text: 消息文本内容。
         :param image: 可选的消息图片URL。
+        :param msg_type: 消息类型。
         :return: 如果消息发送成功，则返回True；否则返回False。
         """
         proxies = settings.PROXY if settings.PROXY else None  # 从配置中获取代理设置
-    
-        with lock:
-            try:
-                # 检查Telegram配置中的Bot令牌和聊天ID是否存在
-                if not tg_config["bot_token"] or not tg_config["chat_id"]:
-                    raise Exception("未添加Telegram Bot令牌或聊天ID")
 
-                # 如果内容为空，设置为空字符串而不是 None
-                text = text if text else ''
-                
-                if image and self._send_image_enabled:
-                    url = f"https://api.telegram.org/bot{tg_config['bot_token']}/sendPhoto"
-                    # 下载图片内容
-                    image_content = requests.get(image, proxies=proxies).content
-                    data = {
-                        "chat_id": tg_config["chat_id"],
-                        "caption": f"*{title}*\n{text}",
-                        "parse_mode": "Markdown"
-                    }
-                    files = {
-                        "photo": ("image.jpg", image_content)
-                    }
-                    # 发送图片消息
+        try:
+            # 检查Telegram配置中的Bot令牌和聊天ID是否存在
+            if not tg_config["bot_token"] or not tg_config["chat_id"]:
+                raise Exception("未添加Telegram Bot令牌或聊天ID")
+
+            # 如果内容为空，设置为空字符串而不是 None
+            text = text if text else ''
+
+            if image:
+                # 如果提供了图片，发送图片消息
+                url = f"https://api.telegram.org/bot{tg_config['bot_token']}/sendPhoto"
+                # 下载图片内容
+                image_content = requests.get(image, proxies=proxies).content
+                image_file = io.BytesIO(image_content)
+                data = {
+                    "chat_id": tg_config["chat_id"],
+                    "caption": f"*{title}*\n{text}",
+                    "parse_mode": "Markdown"
+                }
+                files = {
+                    "photo": ("image.jpg", image_file)
+                }
+                # 发送图片消息
+                with lock:
                     res = requests.post(url, data=data, files=files, proxies=proxies)
-                else:
-                    # 发送文本消息
-                    url = f"https://api.telegram.org/bot{tg_config['bot_token']}/sendMessage"
-                    content = f"*{title}*\n{text}"
-                    data = {
-                        "chat_id": tg_config["chat_id"],
-                        "text": content,
-                        "parse_mode": "Markdown"
-                    }
+            else:
+                # 如果没有图片，则发送文本消息
+                url = f"https://api.telegram.org/bot{tg_config['bot_token']}/sendMessage"
+                content = f"*{title}*\n{text}"
+                data = {
+                    "chat_id": tg_config["chat_id"],
+                    "text": content,
+                    "parse_mode": "Markdown"
+                }
+                with lock:
                     res = requests.post(url, data=data, proxies=proxies)
-
-                # 获取消息类型的显示名称
-                display_names = [NotificationType[msgtype].value for msgtype in tg_config['msgtypes']]
             
-                # 检查响应结果
-                if res:
-                    ret_json = res.json()
-                    if ret_json.get('ok'):
-                        logger.info(f"Bot{tg_config['size']} - {', '.join(display_names)} 消息发送成功")
-                    else:
-                        raise Exception(f"Bot{tg_config['size']} - {', '.join(display_names)} 消息发送失败：{res_json.get('description')}")
+            # 检查响应
+            if res.status_code != 200:
+                raise Exception(f"发送失败: {res.text}")
+
+            # 检查响应结果
+            if res:
+                ret_json = res.json()
+                if ret_json.get('ok'):
+                    logger.info(f"Bot{tg_config['size']} - {msg_type.value if msg_type else '测试消息'} 消息发送成功")
                 else:
-                    raise Exception(f"Bot{tg_config['size']} 消息发送失败，错误码：{res.status_code}，错误原因：{res.reason}")
-    
-                return True
-            except Exception as msg_e:
-                # 捕获异常并记录错误日志
-                logger.error(f"Bot{tg_config['size']} 消息发送失败 - {str(msg_e)}")
-                return False
+                    raise Exception(f"Bot{tg_config['size']} - {msg_type.value if msg_type else '测试消息'} 消息发送失败：{ret_json.get('description')}")
+            else:
+                raise Exception(f"Bot{tg_config['size']} 消息发送失败，错误码：{res.status_code}，错误原因：{res.reason}")
+
+            return True
+        except Exception as msg_e:
+            # 捕获异常并记录错误日志
+            logger.error(f"Bot{tg_config['size']} 消息发送失败 - {str(msg_e)}", exc_info=True)
+            return False
 
     def stop_service(self):
         """
