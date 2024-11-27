@@ -62,7 +62,7 @@ class ShortPlayMonitor(_PluginBase):
     # 插件描述
     plugin_desc = "监控视频短剧创建，刮削。"
     # 插件图标
-    plugin_icon = "Amule_B.png"
+    plugin_icon = "https://raw.githubusercontent.com/xushier/HD-Icons/refs/heads/main/border-radius/Amule_B.png"
     # 插件版本
     plugin_version = "9999.0"
     # 插件作者
