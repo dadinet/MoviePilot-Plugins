@@ -1,7 +1,7 @@
 {
     "CloudStrm": {
       "name": "短剧刮削",
-      "description": "个人修改使用",
+      "description": "监控视频短剧创建，刮削。",
       "labels": "刮削",
       "version": "9999.0",
       "icon": "https://raw.githubusercontent.com/xushier/HD-Icons/refs/heads/main/border-radius/Amule_B.png",
