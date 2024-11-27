@@ -520,12 +520,14 @@ class DoubanSync(_PluginBase):
         """
         通过用户RSS同步豆瓣想看数据
         """
-        logger.info("开始同步豆瓣想看数据...")
         if not self._users:
-            logger.warning("未配置豆瓣用户")
             return
-
-            # 读取历史记录
+        # 版本
+        if hasattr(settings, 'VERSION_FLAG'):
+            version = settings.VERSION_FLAG  # V2
+        else:
+            version = "v1"
+        # 读取历史记录
         if self._clearflag:
             history = []
         else:
@@ -540,7 +542,12 @@ class DoubanSync(_PluginBase):
             user_info = f"{remark}" if remark else user_id
             logger.info(f"开始同步用户 {user_info} 的豆瓣想看数据...")
             url = self._interests_url % user_id
-            results = self.rsshelper.parse(url)
+            if version == "v2":
+                results = self.rsshelper.parse(url, headers={
+                    "User-Agent": settings.USER_AGENT
+                })
+            else:
+                results = self.rsshelper.parse(url)
             if not results:
                 logger.warn(f"未获取到用户 {user_info} 豆瓣RSS数据：{url}")
                 continue
