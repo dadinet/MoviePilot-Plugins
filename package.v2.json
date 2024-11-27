@@ -9,11 +9,11 @@
       "level": 1,
       "v2": true,
       "history": {
-        "v9999.0": "个人修改使用"
+        "v9999.0.1": "个人修改使用"
       }
     },
 
-    "doubansync": {
+    "DoubanSync": {
       "name": "豆瓣想看",
       "description": "个人修改使用",
       "labels": "订阅",
@@ -23,7 +23,7 @@
       "level": 1,
       "v2": true,
       "history": {
-        "v9999.0": "个人修改使用"
+        "v9999.0.1": "个人修改使用"
       }
     }
 }
