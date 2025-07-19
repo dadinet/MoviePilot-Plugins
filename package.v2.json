@@ -1,0 +1,14 @@
+{
+  "ShortPlayMonitor2": {
+    "name": "短剧监控2",
+    "description": "监控视频短剧创建，刮削。",
+    "labels": "刮削",
+    "version": "1.0",
+    "icon": "Amule_B.png",
+    "author": "dadinet",
+    "level": 1,
+    "history": {
+      "v1.0": "封面获取顺序：站点(AGSV/ilolicon) > 视频截图。"
+    }
+  }
+}
