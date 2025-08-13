@@ -1,0 +1,27 @@
+{
+  "ShortPlayMonitor2": {
+    "name": "短剧监控2",
+    "description": "监控视频短剧创建，刮削。",
+    "labels": "刮削",
+    "version": "1.0",
+    "icon": "Amule_B.png",
+    "author": "dadinet",
+    "level": 2,
+    "history": {
+      "v1.0": "封面获取顺序：站点(AGSV/ilolicon) > 视频截图。"
+    }
+  },
+  
+  "SiteSubscriber": {
+    "name": "站点资源订阅",
+    "description": "定时刷新站点资源,识别内容后添加订阅或直接下载。",
+    "labels": "订阅, 下载",
+    "version": "1.0",
+    "icon": "https://raw.githubusercontent.com/dadinet/MoviePilot-Plugins/refs/heads/main/icons/SiteSubscriber.png",
+    "author": "dadinet",
+    "level": 2,
+    "history": {
+      "v1.0": "支持站点资源订阅、属性与规则过滤、自动/手动订阅与下载、独立通知(可选)、待办确认与忽略。"
+    }
+  }
+}
