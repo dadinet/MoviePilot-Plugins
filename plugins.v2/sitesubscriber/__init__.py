@@ -30,7 +30,7 @@ class SiteSubscriber(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/dadinet/MoviePilot-Plugins/refs/heads/main/icons/SiteSubscriber.png"
     # 插件版本
-    plugin_version = "1.0"
+    plugin_version = "1.1"
     # 插件作者
     plugin_author = "dadinet"
     # 作者主页
@@ -71,6 +71,8 @@ class SiteSubscriber(_PluginBase):
     # 独立通知配置
     _independent_notify: bool = False
     _independent_notify_config: Any = None
+    # 日志分组：用于不同资源之间插入空行分隔，提升可读性
+    _last_log_group_key: Optional[str] = None
 
     def init_plugin(self, config: dict = None):
         self.downloadchain = DownloadChain()
@@ -435,6 +437,26 @@ class SiteSubscriber(_PluginBase):
         contents = []
         for item in pending_list:
             item_key = item.get("key")
+            # 计算展示用集数状态
+            total_eps = item.get('total_episodes') or 0
+            latest_ep = item.get('latest_episode') or 0
+            status_text = ''
+            if total_eps and latest_ep and latest_ep >= total_eps:
+                status_text = f"完结({total_eps})"
+            elif total_eps and latest_ep:
+                status_text = f"({latest_ep}//{total_eps})"
+            elif total_eps:
+                status_text = f"完结({total_eps})"
+            # 根据状态选择徽标颜色
+            status_color = None
+            if status_text:
+                status_color = 'success' if status_text.startswith('完结') else 'warning'
+            # 圆点颜色（不使用组件色名，明确到具体颜色值）
+            status_dot_color = None
+            if status_color == 'success':
+                status_dot_color = '#4CAF50'
+            elif status_color == 'warning':
+                status_dot_color = '#FF9800'
             contents.append({
                 'component': 'VCard',
                 'props': {
@@ -447,6 +469,28 @@ class SiteSubscriber(_PluginBase):
                         'component': 'div',
                         'props': {'class': 'absolute inset-0', 'style': 'background-image: linear-gradient(to top, rgba(0,0,0,0.9), rgba(0,0,0,0.5));'}
                     },
+                    *([
+                        {
+                            'component': 'div',
+                            'props': {
+                                'class': 'absolute right-2 top-2 z-20 flex items-center gap-2 px-2 py-1 rounded',
+                                'style': 'background-color: rgba(0,0,0,0.45);'
+                            },
+                            'content': [
+                                {
+                                    'component': 'div',
+                                    'props': {'class': 'text-white text-caption'},
+                                    'text': status_text
+                                },
+                                {
+                                    'component': 'div',
+                                    'props': {
+                                        'style': f'width: 14px; height: 14px; border-radius: 9999px; background-color: {status_dot_color};'
+                                    }
+                                }
+                            ]
+                        }
+                    ] if status_text else []),
                     {
                         'component': 'div',
                         'props': {'class': 'relative z-10'},
@@ -469,7 +513,7 @@ class SiteSubscriber(_PluginBase):
                                             {'component': 'div', 'props': {'class': 'text-sm font-medium text-white sm:pt-1'}, 'text': item.get('mediainfo', {}).get('year')},
                                             {'component': 'div', 'props': {'class': 'mr-2 min-w-0 text-lg font-bold text-white text-ellipsis overflow-hidden line-clamp-2'}, 'text': f"{item.get('mediainfo', {}).get('title')}{f' S{str(item.get('meta', {}).get('season')).zfill(2)}' if item.get('meta', {}).get('season') else ''}"},
                                             {'component': 'div', 'props': {'class': 'text-subtitle-2 text-white'}, 'text': f'{item.get("type")}'},
-                                            {'component': 'div', 'props': {'class': 'text-subtitle-2 text-white'}, 'text': f'{item.get("time")}'}
+                                            {'component': 'div', 'props': {'class': 'text-subtitle-2 text-white'}, 'text': f'{item.get("time")}'},
                                         ]
                                     }
                                 ]
@@ -627,12 +671,17 @@ class SiteSubscriber(_PluginBase):
                 season = self._get_season_from_title(item_to_process.get("title"))
                 if season:
                     meta.begin_season = season
-            
             mediainfo = MediaInfo()
             mediainfo.from_dict(item_to_process.get("mediainfo", {}))
 
             torrent_info = TorrentInfo()
             torrent_info.from_dict(item_to_process.get("torrent_info", {}))
+
+            # 若标题或描述包含“全N集”，若仍无季号则默认视作第1季（不再写入 episode_list 到 meta）
+            combined_text = f"{item_to_process.get('title') or ''} {getattr(torrent_info, 'description', '') or ''}"
+            total_eps = self._get_total_episodes_from_title(combined_text)
+            if total_eps and getattr(meta, "begin_season", None) is None:
+                meta.begin_season = 1
 
             logger.info(f"动作：{self._get_action_cn(action)}，站点ID：{site_id}")
 
@@ -698,6 +747,8 @@ class SiteSubscriber(_PluginBase):
         """
         通过站点获取数据并处理
         """
+        # 每轮运行重置日志分组键
+        self._last_log_group_key = None
         logger.info(f"站点资源订阅 check 任务开始执行，站点: {self._address}，动作: {self._get_action_cn(self._action)}")
         if not self._address:
             logger.warning("站点列表为空，任务结束。")
@@ -749,6 +800,17 @@ class SiteSubscriber(_PluginBase):
         torrent_info = context.torrent_info
         if not torrent_info:
             return
+        # 不同资源之间插入空行分隔（按完整标题分组）
+        try:
+            current_key = (torrent_info.title or "").strip()
+            if current_key and self._last_log_group_key != current_key:
+                if self._last_log_group_key is not None:
+                    logger.info("")
+                self._last_log_group_key = current_key
+                # 在新资源块开始时先打印完整资源名，便于阅读检索
+                logger.info(f"{torrent_info.title}")
+        except Exception:
+            pass
 
         # 1) 属性过滤（标题、质量、分辨率、特效等）
         if not torrent_helper.filter_torrent(torrent_info, filter_params):
@@ -760,6 +822,10 @@ class SiteSubscriber(_PluginBase):
         season = self._get_season_from_title(torrent_info.title)
         if season:
             meta.begin_season = season
+        # 若标题或描述包含“全N集”，若仍无季号则默认视作第1季（不写入只读属性）
+        total_eps = self._get_total_episodes_from_title(f"{torrent_info.title} {torrent_info.description or ''}")
+        if total_eps and getattr(meta, "begin_season", None) is None:
+            meta.begin_season = 1
         if not meta.name:
             logger.warning(f"'{torrent_info.title}' 未识别到有效媒体名称，无法应用优先级规则组")
             return
@@ -767,6 +833,13 @@ class SiteSubscriber(_PluginBase):
         if not mediainfo:
             logger.warning(f"未识别到媒体信息: '{torrent_info.title}'，无法应用优先级规则组")
             return
+        # 打印从 mediainfo 推断的总集数，来源明确
+        try:
+            season_no = getattr(meta, 'begin_season', None)
+            mi_total = self._get_total_episodes_from_mediainfo(mediainfo, season_no)
+            logger.info(f"mediainfo - 媒体数据总集数: {mi_total or '-'}")
+        except Exception:
+            pass
 
         # 3) 规则组过滤（用户配置的更细粒度优先规则）
         if self._filter_groups:
@@ -782,32 +855,75 @@ class SiteSubscriber(_PluginBase):
 
         # 4) 构造历史唯一键与标准日志标题，用于去重与用户可读日志
         history_key = self._get_history_key(mediainfo, meta)
-        log_title = self._get_log_title(mediainfo.to_dict(), meta.to_dict())
+        log_title = self._get_log_title(mediainfo.to_dict(), meta)
 
         if history_key and self._history.get(history_key):
+            existing = self._history[history_key]
             status_map = {"pending": "待确认", "confirmed": "已确认", "ignored": "已忽略"}
-            status_cn = status_map.get(self._history[history_key].get("status"), "未知")
-            logger.info(f"'{log_title}' 已存在于历史记录中 (状态: {status_cn})，已跳过")
+            status = existing.get("status")
+            status_cn = status_map.get(status, "未知")
+            if status == "pending":
+                # 仅更新 pending 的统计信息（优先：标题/描述“全N集” > mediainfo > episode_list；避免回退）
+                prev_total = existing.get("total_episodes")
+                prev_latest = existing.get("latest_episode")
+                display_total, latest_ep = self._compute_episode_stats(
+                    meta=meta,
+                    mediainfo=mediainfo,
+                    torrent_info=torrent_info,
+                    prev_total=prev_total,
+                    prev_latest=prev_latest
+                )
+                # 仅当发生变化时写回并打印更新日志
+                prev_total_int = int(prev_total) if isinstance(prev_total, int) else (int(prev_total) if isinstance(prev_total, str) and prev_total.isdigit() else 0)
+                prev_latest_int = int(prev_latest) if isinstance(prev_latest, int) else (int(prev_latest) if isinstance(prev_latest, str) and prev_latest.isdigit() else 0)
+                new_total_int = int(display_total) if display_total else 0
+                new_latest_int = int(latest_ep) if latest_ep else 0
+                changed = (new_total_int != prev_total_int) or (new_latest_int != prev_latest_int)
+                if changed:
+                    if display_total:
+                        existing["total_episodes"] = display_total
+                    if latest_ep:
+                        existing["latest_episode"] = latest_ep
+                    # 更新最近一次统计更新时间
+                    existing["time"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    self._history[history_key] = existing
+                    self.save_data('history', self._history)
+                    logger.info(f"'{log_title}' 已存在且为 待确认，已更新统计信息 (总集数={display_total or '-'}, 最新集数={latest_ep or '-'})")
+            else:
+                logger.info(f"'{log_title}' 已存在于历史记录中 (状态: {status_cn})，不更新")
             return
 
-        # 5) 尺寸过滤：配置为 GB，转为字节与种子 size 对比
+        # 5) 计算用于存在性判断的集清单（不写入 meta，避免只读属性异常）
+        computed_episode_list: Optional[List[int]] = None
+        if total_eps:
+            computed_episode_list = list(range(1, total_eps + 1))
+        elif getattr(meta, "begin_season", None) is not None:
+            mi_total = self._get_total_episodes_from_mediainfo(mediainfo, meta.begin_season)
+            if mi_total:
+                computed_episode_list = list(range(1, mi_total + 1))
+
+        # 6) 尺寸过滤：配置为 GB，转为字节与种子 size 对比
         if self._size_range and torrent_info.size:
             sizes = [float(_size) * 1024 ** 3 for _size in self._size_range.split("-")]
             if (len(sizes) == 1 and float(torrent_info.size) < sizes[0]) or \
                (len(sizes) > 1 and not sizes[0] <= float(torrent_info.size) <= sizes[1]):
-                logger.info(f"'{torrent_info.title}' - 种子大小不符合条件")
+                logger.info(f"'{torrent_info.title}' - 种子大小不符合条件，已跳过处理")
                 return
 
-        # 6) 存量检查：媒体库存在或订阅已存在则跳过
-        if self.media_exists_check(mediainfo=mediainfo, meta=meta):
-            logger.info(f"'{log_title}' 在媒体库中已存在")
+        # 7) 存量检查：媒体库存在或订阅已存在则跳过
+        exists_full, complete_flag = self.media_exists_check(
+            mediainfo=mediainfo, meta=meta, episode_list=computed_episode_list
+        )
+        if exists_full:
+            suffix = "（无缺集）" if mediainfo.type == MediaType.TV and complete_flag else ""
+            logger.info(f"'{log_title}' 在媒体库中已存在{suffix}，已跳过处理")
             return
 
         if self.subscribechain.exists(mediainfo=mediainfo, meta=meta):
-            logger.info(f"'{log_title}' 已在订阅中")
+            logger.info(f"'{log_title}' 已在订阅中，已跳过处理")
             return
 
-        # 7) 最终动作：自动订阅 / 直接下载 / 加入待办
+        # 8) 最终动作：自动订阅 / 直接下载 / 加入待办
         if self._action == "auto_subscribe":
             logger.info(f"'{log_title}' 不在订阅中，开始自动订阅")
             self.add_subscribe(meta=meta, mediainfo=mediainfo, site_id=site_id)
@@ -821,6 +937,8 @@ class SiteSubscriber(_PluginBase):
                 "type": (mediainfo.type.value if getattr(mediainfo, "type", None) else (meta.type.value if getattr(meta, "type", None) else None)),
                 "season": getattr(meta, "begin_season", None),
             }
+            # 统计展示：总集数与最新集数（优先“全N集”，次之 mediainfo，再其次 episode_list）
+            display_total, latest_ep = self._compute_episode_stats(meta=meta, mediainfo=mediainfo, torrent_info=torrent_info)
             history_item = {
                 "title": torrent_info.title,
                 "poster": mediainfo.get_poster_image(),
@@ -832,12 +950,18 @@ class SiteSubscriber(_PluginBase):
                 "meta": safe_meta,
                 "mediainfo": mediainfo.to_dict(),
                 "torrent_info": torrent_info.to_dict(),
+                "total_episodes": display_total if display_total else None,
+                "latest_episode": latest_ep if latest_ep else None,
                 "key": history_key
             }
             if history_key:
                 self._history[history_key] = history_item
                 self.save_data('history', self._history)
-                logger.info(f"'{log_title}' 已添加到待确认列表")
+                # 新增时也打印一次统计信息
+                stats_msg = ""
+                if display_total or latest_ep:
+                    stats_msg = f" (总集数={display_total or '-'}, 最新集数={latest_ep or '-'})"
+                logger.info(f"'{log_title}' 已添加到待确认列表{stats_msg}")
                 if self._notify:
                     text = f"{log_title} 已添加到待确认列表，请及时处理。"
                     if self._independent_notify:
@@ -855,19 +979,21 @@ class SiteSubscriber(_PluginBase):
                             overview=mediainfo.overview
                         )
 
-    def media_exists_check(self, mediainfo: MediaInfo, meta: MetaInfo) -> bool:
+    def media_exists_check(self, mediainfo: MediaInfo, meta: MetaInfo, episode_list: Optional[List[int]] = None) -> Tuple[bool, bool]:
         # 查询媒体是否已存在：电影看整体是否存在，剧集按季与集做“子集”判定
         exist_info: Optional[ExistMediaInfo] = self.searchchain.media_exists(mediainfo=mediainfo)
         if mediainfo.type == MediaType.TV:
             if not exist_info or not getattr(exist_info, 'seasons', None):
-                return False
+                return False, False
             exist_episodes = exist_info.seasons.get(meta.begin_season)
             if not exist_episodes:
-                return False
-            if getattr(meta, 'episode_list', None):
-                return set(meta.episode_list).issubset(set(exist_episodes))
-            return False
-        return bool(exist_info)
+                return False, False
+            check_list = episode_list if episode_list is not None else getattr(meta, 'episode_list', None)
+            if check_list:
+                complete = set(check_list).issubset(set(exist_episodes))
+                return complete, complete
+            return False, False
+        return bool(exist_info), bool(exist_info)
 
     def download_torrent(self, meta: MetaInfo, mediainfo: MediaInfo, torrent_info: TorrentInfo):
         self.downloadchain.download_single(
@@ -927,6 +1053,170 @@ class SiteSubscriber(_PluginBase):
         if season_match:
             return int(season_match.group(1))
         return None
+
+    @staticmethod
+    def _get_total_episodes_from_title(title: str) -> Optional[int]:
+        """
+        从标题中解析“全N集”的总集数
+        """
+        if not title:
+            return None
+        match = re.search(r'全0*(\d+)集', title)
+        if match:
+            return int(match.group(1))
+        return None
+
+    @staticmethod
+    def _get_latest_episode_from_text(text: str) -> Optional[int]:
+        """
+        从文本中解析已发布的最新集数，支持以下写法，出现多个时取最大值：
+        - S01E20 / S01E20-E21 / E20 / E20-21 / EP20 / EP20-21
+        - 第20集 / 第20-21集 / 第20、21集
+        """
+        if not text:
+            return None
+        candidates: List[int] = []
+        # 避免把“修复/替换/补发 第N集”这类维护说明当作最新进度
+        exclusion_keywords = ["修复", "修正", "补发", "补档", "重发", "替换", "修补", "补齐", "补种"]
+
+        def is_excluded(prefix: str) -> bool:
+            return any(kw in prefix for kw in exclusion_keywords)
+
+        # 1) 形如 S01E20 或 S01E20-E21
+        for m in re.finditer(r'S\s*\d+\s*E\s*(\d+)(?:\s*[\-~]\s*(?:E)?\s*(\d+))?', text, re.IGNORECASE):
+            prefix = text[max(0, m.start()-8):m.start()]
+            if is_excluded(prefix):
+                continue
+            try:
+                first_ep = int(m.group(1))
+                candidates.append(first_ep)
+                if m.group(2):
+                    candidates.append(int(m.group(2)))
+            except Exception:
+                pass
+
+        # 2) 独立的 E20 / E20-21（避免匹配到 HEVC 等，使用前后界定）
+        for m in re.finditer(r'(?<![A-Za-z0-9])E\s*(\d+)(?:\s*[\-~]\s*(?:E)?\s*(\d+))?\b', text, re.IGNORECASE):
+            prefix = text[max(0, m.start()-8):m.start()]
+            if is_excluded(prefix):
+                continue
+            try:
+                candidates.append(int(m.group(1)))
+                if m.group(2):
+                    candidates.append(int(m.group(2)))
+            except Exception:
+                pass
+
+        # 3) EP20 / EP20-21
+        for m in re.finditer(r'(?<![A-Za-z0-9])EP\s*(\d+)(?:\s*[\-~]\s*(?:EP)?\s*(\d+))?\b', text, re.IGNORECASE):
+            prefix = text[max(0, m.start()-8):m.start()]
+            if is_excluded(prefix):
+                continue
+            try:
+                candidates.append(int(m.group(1)))
+                if m.group(2):
+                    candidates.append(int(m.group(2)))
+            except Exception:
+                pass
+
+        # 4) 第20集 / 第20-21集 / 第20、21集
+        for m in re.finditer(r'第\s*(\d+)\s*(?:[\-~、,，]\s*(\d+)\s*)?集', text):
+            prefix = text[max(0, m.start()-8):m.start()]
+            if is_excluded(prefix):
+                continue
+            try:
+                candidates.append(int(m.group(1)))
+                if m.group(2):
+                    candidates.append(int(m.group(2)))
+            except Exception:
+                pass
+        return max(candidates) if candidates else None
+
+    @staticmethod
+    def _get_total_episodes_from_mediainfo(mediainfo: MediaInfo, season: Optional[int]) -> Optional[int]:
+        """
+        尝试从 mediainfo 中解析当前季的总集数。该方法对键名与结构做了尽量宽松的兼容。
+        """
+        try:
+            if not mediainfo:
+                return None
+            info_dict = mediainfo.to_dict() if hasattr(mediainfo, "to_dict") else None
+            if not info_dict:
+                return None
+            # 直接键名
+            for key in ["total_episodes", "episode_count", "episodes_count"]:
+                value = info_dict.get(key)
+                if isinstance(value, int) and value > 0:
+                    return value
+            # seasons 结构（可能是 dict 或 list）
+            seasons_data = info_dict.get("seasons")
+            if not seasons_data or season is None:
+                return None
+            # dict: 处理多种可能的键
+            if isinstance(seasons_data, dict):
+                for k in [season, str(season), f"S{str(season).zfill(2)}", f"{season:02d}"]:
+                    if k in seasons_data:
+                        data = seasons_data.get(k)
+                        if isinstance(data, list):
+                            return len(data)
+                        if isinstance(data, dict):
+                            for ckey in ["episode_count", "episodes", "total_episodes"]:
+                                v = data.get(ckey)
+                                if isinstance(v, int) and v > 0:
+                                    return v
+                                if isinstance(v, list):
+                                    return len(v)
+                        if isinstance(data, int) and data > 0:
+                            return data
+            # list: 形如 [{season_number, episode_count, ...}]
+            if isinstance(seasons_data, list):
+                for item in seasons_data:
+                    if not isinstance(item, dict):
+                        continue
+                    sn = item.get("season_number") or item.get("season") or item.get("number")
+                    if sn == season:
+                        for ckey in ["episode_count", "episodes", "total_episodes"]:
+                            v = item.get(ckey)
+                            if isinstance(v, int) and v > 0:
+                                return v
+                            if isinstance(v, list):
+                                return len(v)
+            return None
+        except Exception:
+            return None
+
+    def _compute_episode_stats(self, meta: MetaInfo, mediainfo: MediaInfo, torrent_info: TorrentInfo, prev_total: Optional[int] = None, prev_latest: Optional[int] = None) -> Tuple[Optional[int], Optional[int]]:
+        """
+        计算展示用的总集数与最新集数：
+        - 总集数优先取标题/描述中的“全N集”，其次取 mediainfo，最后取 episode_list 长度
+        - 若存在历史总集数，则不降低（取更大者）
+        - 若仅识别到总集数，则最新集数默认为总集数
+        - 若最新集数大于总集数，则总集数取两者较大值，避免矛盾
+        """
+        combined_text = f"{torrent_info.title} {torrent_info.description or ''}"
+        title_total = self._get_total_episodes_from_title(combined_text) or 0
+        mi_total = self._get_total_episodes_from_mediainfo(mediainfo, getattr(meta, "begin_season", None)) or 0
+        list_total = len(getattr(meta, "episode_list", []) or [])
+
+        # 按优先级选择，并与历史值取较大
+        total = title_total or mi_total or list_total or 0
+        if prev_total:
+            total = max(total, int(prev_total))
+
+        latest = self._get_latest_episode_from_text(combined_text)
+        # 维持单调不减：若此前已有最新集数，且本次识别到的更小，则保留较大值
+        if prev_latest and (not latest or latest < int(prev_latest)):
+            latest = int(prev_latest)
+        if not latest and total:
+            latest = total
+        # 若标题/描述明确出现“全N集”，优先将最新集数提升为总集数，避免被“修复第2集”等维护信息干扰
+        if title_total and total:
+            latest = max(latest or 0, total)
+
+        if latest and total and latest > total:
+            total = latest
+
+        return (total or None, latest or None)
 
     @staticmethod
     def _get_history_key(mediainfo: MediaInfo, meta: MetaInfo) -> Optional[str]:
